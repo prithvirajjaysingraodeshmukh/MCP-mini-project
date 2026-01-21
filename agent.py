@@ -115,12 +115,12 @@ If a needed log file is not listed, state that it is unavailable instead of inve
     def process_query(self, user_query: str, available_files: List[str], max_iterations: int = 10) -> Dict[str, Any]:
         """
         Process a user query by coordinating between Gemini Pro and MCP server.
-        
+
         Args:
             user_query: User's question about logs
             available_files: List of allowed file names/paths for this session
             max_iterations: Maximum number of tool calls allowed
-            
+
         Returns:
             Dictionary with final answer and execution history
         """
@@ -141,73 +141,46 @@ User request:
 Remember: If you need to use a tool, respond ONLY with JSON: {{"tool": "tool_name", "arguments": {{...}}}}
 
 What is the first tool you need to call?"""
-        
+
         iteration = 0
-        final_answer = None
-        
-        while iteration < max_iterations:
+        tool_phase_complete = False
+
+        while iteration < max_iterations and not tool_phase_complete:
             iteration += 1
-            
+
             # Get response from Gemini Pro
             try:
                 full_prompt = prompt
                 if conversation_history:
                     full_prompt += "\n\nPrevious conversation:\n" + "\n".join(conversation_history[-3:])
-                
+
                 response = self.model.generate_content(full_prompt)
                 response_text = response.text.strip()
-                
+
                 # Try to extract tool request
                 tool_request = self._extract_json_from_response(response_text)
-                
+
                 if tool_request:
                     # Execute tool via MCP server
                     tool_name = tool_request['tool']
                     tool_args = tool_request['arguments']
-                    
+
                     result = self.mcp_server.execute_tool(tool_name, tool_args)
                     tool_results.append({
                         'tool': tool_name,
                         'arguments': tool_args,
                         'result': result
                     })
-                    
+
                     # Update conversation history
                     conversation_history.append(f"Tool call: {tool_name} with args: {json.dumps(tool_args)}")
                     conversation_history.append(f"Tool result: {json.dumps(result, indent=2)}")
-                    
+
                     # Check if we need to continue or provide final answer
                     if result.get('success'):
-                        # Ask Gemini if more tools are needed or if we can answer
                         if tool_name == 'analyze_logs':
-                            # We have the analysis, ask for final summary
-                            summary_prompt = f"""
-You are now in ANSWER MODE.
-
-You MUST NOT return JSON.
-You MUST NOT request tools.
-You MUST explain results in natural language for a human user.
-
-User question:
-{user_query}
-
-Analysis results (from tools):
-{json.dumps(tool_results, indent=2)}
-
-Write a clear, concise explanation.
-Focus on insights, patterns, and key issues.
-"""
-
-                            
-                            summary_response = self.model.generate_content(
-    summary_prompt,
-    generation_config={
-        "temperature": 0.4
-    }
-)
-
-                            final_answer = summary_response.text
-                            break
+                            # Tool phase is complete - exit loop and enter ANSWER MODE
+                            tool_phase_complete = True
                         else:
                             # Continue with next tool
                             prompt = f"""Tool "{tool_name}" executed successfully. Result: {json.dumps(result, indent=2)}
@@ -220,30 +193,54 @@ What is the next tool you need to call? Remember: respond ONLY with JSON if call
 What should you do next? You can try a different tool or provide an answer based on what you know."""
                         prompt = error_prompt
                 else:
-                    # No tool request found - might be a final answer
-                    if iteration > 1 or 'error' in response_text.lower() or 'cannot' in response_text.lower():
-                        # This might be a final answer
-                        final_answer = response_text
-                        break
-                    else:
-                        # Retry with clearer instructions
-                        prompt = f"""Your response was not valid JSON. Please respond ONLY with JSON in this format:
+                    # No tool request found - retry with clearer instructions
+                    prompt = f"""Your response was not valid JSON. Please respond ONLY with JSON in this format:
 {{"tool": "tool_name", "arguments": {{"param": "value"}}}}
 
 User question: {user_query}
 Available tools: {', '.join(self.mcp_server.tools.keys())}"""
-                        
+
             except Exception as e:
                 return {
                     'success': False,
                     'error': f'Error in agent processing: {str(e)}',
                     'tool_results': tool_results,
-                    'final_answer': final_answer
+                    'final_answer': None
                 }
-        
+
+        # ANSWER MODE: Generate final natural language response
+        final_answer = None
+        if tool_results:
+            try:
+                answer_prompt = f"""You are now in ANSWER MODE.
+
+CRITICAL RULES FOR ANSWER MODE:
+- Do NOT return JSON
+- Do NOT request tools
+- Do NOT include tool syntax in your response
+- ONLY provide a natural language explanation for the user
+
+User question:
+{user_query}
+
+Tool execution results:
+{json.dumps(tool_results, indent=2)}
+
+Provide a clear, concise explanation that directly answers the user's question.
+Focus on insights, patterns, and key issues found in the logs."""
+
+                answer_response = self.model.generate_content(
+                    answer_prompt,
+                    generation_config={"temperature": 0.4}
+                )
+                final_answer = answer_response.text.strip()
+
+            except Exception as e:
+                final_answer = f"Tool execution completed but failed to generate summary: {str(e)}"
+
         if not final_answer:
             final_answer = "I was unable to complete the analysis. Please check the tool execution results."
-        
+
         return {
             'success': True,
             'final_answer': final_answer,
