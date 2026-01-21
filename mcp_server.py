@@ -9,6 +9,7 @@ This module implements the Model Context Protocol server that:
 """
 
 import json
+import os
 from typing import Dict, Any, List, Optional, Tuple
 import tools
 
@@ -22,15 +23,21 @@ class MCPServer:
     """
     
     def __init__(self):
-        """Initialize the MCP server with available tools."""
+        """Initialize the MCP server with available tools and allow-list."""
+        self.upload_dir = os.path.normpath('data/uploads')
+        os.makedirs(self.upload_dir, exist_ok=True)
+        self.default_log = os.path.normpath('data/application.log')
+        self.allowed_files: set[str] = set()
+        self.set_available_files([])  # initialize allow-list
+
         self.tools = {
-            'read_file': {
-                'name': 'read_file',
-                'description': 'Reads a log file from the filesystem. Returns file content.',
+            'read_logs': {
+                'name': 'read_logs',
+                'description': 'Reads allowed log files (data/application.log and uploaded files). Returns a mapping of file to content.',
                 'parameters': {
-                    'file_path': {
-                        'type': 'string',
-                        'description': 'Path to the log file to read'
+                    'file_names': {
+                        'type': 'array',
+                        'description': 'List of file names to read from the allow-list'
                     }
                 }
             },
@@ -58,10 +65,35 @@ class MCPServer:
         
         # Tool execution mapping
         self.tool_executors = {
-            'read_file': tools.read_file,
+            'read_logs': tools.read_logs,
             'parse_logs': tools.parse_logs,
             'analyze_logs': tools.analyze_logs
         }
+
+    def set_available_files(self, file_names: List[str]) -> None:
+        """
+        Set the allow-list of readable files for the current session.
+
+        Always includes the default log. Uploaded files must reside in data/uploads/.
+        """
+        allowed = {self.default_log}
+
+        # Include any files actually present in the uploads directory
+        if os.path.isdir(self.upload_dir):
+            for fname in os.listdir(self.upload_dir):
+                allowed.add(os.path.normpath(os.path.join(self.upload_dir, fname)))
+
+        # Add any explicitly provided files that are inside the uploads dir
+        for name in file_names:
+            if not isinstance(name, str):
+                continue
+            normalized = os.path.normpath(name)
+            if normalized.startswith(self.upload_dir + os.sep):
+                allowed.add(normalized)
+            elif normalized == self.default_log:
+                allowed.add(normalized)
+
+        self.allowed_files = allowed
     
     def get_available_tools(self) -> List[Dict[str, Any]]:
         """
@@ -94,6 +126,26 @@ class MCPServer:
         missing_params = required_params - provided_params
         if missing_params:
             return False, f"Missing required parameters: {missing_params}"
+
+        # Additional validation for read_logs
+        if tool_name == 'read_logs':
+            file_names = arguments.get('file_names')
+            if not isinstance(file_names, list) or not file_names:
+                return False, "file_names must be a non-empty list of allowed files"
+            disallowed = []
+            normalized = []
+            for name in file_names:
+                if not isinstance(name, str):
+                    disallowed.append(str(name))
+                    continue
+                norm = os.path.normpath(name)
+                normalized.append(norm)
+                if norm not in self.allowed_files:
+                    disallowed.append(name)
+            if disallowed:
+                return False, f"File(s) not allowed: {disallowed}. Allowed files: {sorted(self.allowed_files)}"
+            # replace arguments with normalized names to ensure exact paths
+            arguments['file_names'] = normalized
         
         return True, None
     
@@ -125,8 +177,8 @@ class MCPServer:
             executor = self.tool_executors[tool_name]
             
             # Handle different argument types
-            if tool_name == 'read_file':
-                result = executor(arguments['file_path'])
+            if tool_name == 'read_logs':
+                result = executor(arguments['file_names'])
             elif tool_name == 'parse_logs':
                 result = executor(arguments['log_text'])
             elif tool_name == 'analyze_logs':

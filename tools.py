@@ -6,40 +6,58 @@ deterministic operations on log data. These tools are called by the
 MCP server based on requests from the LLM.
 """
 
+import os
 import re
 from typing import List, Dict, Any
 from collections import Counter, defaultdict
 
 
-def read_file(file_path: str) -> Dict[str, Any]:
+def read_logs(file_names: List[str]) -> Dict[str, Any]:
     """
-    Reads a log file from the filesystem.
-    
+    Reads allowed log files from disk.
+
+    Allowed:
+    - data/application.log
+    - Files inside data/uploads/ (provided by user)
+
     Args:
-        file_path: Path to the log file
-        
+        file_names: List of file names or relative paths to read
+
     Returns:
-        Dictionary with 'success' status and 'content' or 'error' message
+        Dictionary with file contents keyed by file name
     """
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        return {
-            'success': True,
-            'content': content,
-            'file_path': file_path,
-            'lines_count': len(content.splitlines())
-        }
-    except FileNotFoundError:
-        return {
-            'success': False,
-            'error': f'File not found: {file_path}'
-        }
-    except Exception as e:
-        return {
-            'success': False,
-            'error': f'Error reading file: {str(e)}'
-        }
+    if not isinstance(file_names, list):
+        return {'success': False, 'error': 'file_names must be a list'}
+
+    base_default = os.path.normpath('data/application.log')
+    uploads_dir = os.path.normpath('data/uploads')
+    results: Dict[str, str] = {}
+
+    for name in file_names:
+        if not isinstance(name, str):
+            return {'success': False, 'error': f'Invalid file name type: {name!r}'}
+
+        normalized = os.path.normpath(name)
+
+        # Enforce allow-list: default log or file within uploads dir
+        is_default = normalized == base_default
+        is_upload = normalized.startswith(uploads_dir + os.sep)
+
+        if not (is_default or is_upload):
+            return {
+                'success': False,
+                'error': f'File not allowed: {name}. Allowed files are data/application.log or files in data/uploads/.'
+            }
+
+        try:
+            with open(normalized, 'r', encoding='utf-8') as f:
+                results[normalized] = f.read()
+        except FileNotFoundError:
+            return {'success': False, 'error': f'File not found: {name}'}
+        except Exception as e:
+            return {'success': False, 'error': f'Error reading {name}: {str(e)}'}
+
+    return {'success': True, 'files': results}
 
 
 def parse_logs(log_text: str) -> Dict[str, Any]:

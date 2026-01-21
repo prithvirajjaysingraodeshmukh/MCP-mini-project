@@ -32,28 +32,29 @@ class GeminiAgent:
         self.mcp_server = MCPServer()
         
         # System prompt that enforces strict JSON tool requests
-        self.system_prompt = """You are a log analysis assistant. Your role is to analyze log files and answer questions about them.
+        self.system_prompt = """You are a log analysis assistant. Your role is to analyze ONLY the provided log files.
 
 CRITICAL RULES:
 1. You CANNOT read files or execute code directly.
 2. You MUST use tools via the MCP (Model Context Protocol) server.
-3. When you need to use a tool, respond ONLY with valid JSON in this exact format:
+3. The only available log files are the ones listed below. NEVER invent new file names (e.g., do NOT use log.txt if not listed).
+4. When you need to use a tool, respond ONLY with valid JSON in this exact format:
    {"tool": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
-4. Do NOT include any text before or after the JSON.
-5. Do NOT explain what you're doing - just return the JSON.
+5. Do NOT include any text before or after the JSON.
+6. Do NOT explain what you're doing - just return the JSON.
 
 Available tools:
-- read_file(file_path): Reads a log file from the filesystem
+- read_logs(file_names): Reads allowed log files (default + uploaded) and returns contents
 - parse_logs(log_text): Parses raw log text into structured format
 - analyze_logs(parsed_logs): Analyzes parsed logs to extract statistics
 
 Workflow:
-1. First, use read_file to get the log content
-2. Then, use parse_logs to structure the data
-3. Finally, use analyze_logs to get statistics
-4. After receiving tool results, provide a natural language summary
+1. Use read_logs with an explicit list of allowed file names to get content.
+2. Use parse_logs on the retrieved content.
+3. Use analyze_logs on parsed entries.
+4. Provide a natural language summary using tool results.
 
-When the user asks a question, determine which tools you need and call them in sequence."""
+If a needed log file is not listed, state that it is unavailable instead of inventing a name."""
     
     def get_tool_descriptions(self) -> str:
         """
@@ -111,12 +112,13 @@ When the user asks a question, determine which tools you need and call them in s
         
         return None
     
-    def process_query(self, user_query: str, max_iterations: int = 10) -> Dict[str, Any]:
+    def process_query(self, user_query: str, available_files: List[str], max_iterations: int = 10) -> Dict[str, Any]:
         """
         Process a user query by coordinating between Gemini Pro and MCP server.
         
         Args:
             user_query: User's question about logs
+            available_files: List of allowed file names/paths for this session
             max_iterations: Maximum number of tool calls allowed
             
         Returns:
@@ -124,12 +126,17 @@ When the user asks a question, determine which tools you need and call them in s
         """
         conversation_history = []
         tool_results = []
-        
-        # Build initial prompt
-        prompt = f"""User question: {user_query}
+        self.mcp_server.set_available_files(available_files)
 
-Available tools:
-{self.get_tool_descriptions()}
+        # Build initial prompt with system instructions and available files
+        available_files_text = "\n".join(f"- {name}" for name in available_files)
+        prompt = f"""{self.system_prompt}
+
+Available log files:
+{available_files_text}
+
+User request:
+{user_query}
 
 Remember: If you need to use a tool, respond ONLY with JSON: {{"tool": "tool_name", "arguments": {{...}}}}
 
@@ -174,14 +181,31 @@ What is the first tool you need to call?"""
                         # Ask Gemini if more tools are needed or if we can answer
                         if tool_name == 'analyze_logs':
                             # We have the analysis, ask for final summary
-                            summary_prompt = f"""Based on the tool results, provide a comprehensive answer to the user's question: "{user_query}"
+                            summary_prompt = f"""
+You are now in ANSWER MODE.
 
-Tool execution history:
+You MUST NOT return JSON.
+You MUST NOT request tools.
+You MUST explain results in natural language for a human user.
+
+User question:
+{user_query}
+
+Analysis results (from tools):
 {json.dumps(tool_results, indent=2)}
 
-Provide a clear, natural language answer that addresses the user's question. Include specific numbers and insights from the analysis."""
+Write a clear, concise explanation.
+Focus on insights, patterns, and key issues.
+"""
+
                             
-                            summary_response = self.model.generate_content(summary_prompt)
+                            summary_response = self.model.generate_content(
+    summary_prompt,
+    generation_config={
+        "temperature": 0.4
+    }
+)
+
                             final_answer = summary_response.text
                             break
                         else:

@@ -1,0 +1,36 @@
+2025-02-10 09:00:01 INFO  AuthService      - User login successful | user_id=1023
+2025-02-10 09:00:03 INFO  PaymentService   - Payment initiated | txn_id=TXN88421
+2025-02-10 09:00:04 WARN  PaymentService   - Payment gateway latency high | txn_id=TXN88421
+2025-02-10 09:00:06 ERROR PaymentService   - Payment failed | reason=TIMEOUT | txn_id=TXN88421
+2025-02-10 09:00:07 INFO  NotificationSvc  - Failure notification queued | txn_id=TXN88421
+
+2025-02-10 09:01:12 INFO  AuthService      - User login successful | user_id=1045
+2025-02-10 09:01:14 WARN  AuthService      - Suspicious login attempt detected | user_id=1045 | ip=192.168.1.77
+2025-02-10 09:01:15 ERROR AuthService      - Account temporarily locked | user_id=1045
+
+2025-02-10 09:02:30 INFO  OrderService     - Order created | order_id=ORD55312
+2025-02-10 09:02:32 INFO  InventoryService - Inventory reserved | order_id=ORD55312
+2025-02-10 09:02:34 ERROR InventoryService - Inventory mismatch | sku=SKU9981 | order_id=ORD55312
+2025-02-10 09:02:36 WARN  OrderService     - Order processing delayed | order_id=ORD55312
+
+2025-02-10 09:03:10 INFO  DBService        - Connection established
+2025-02-10 09:03:14 WARN  DBService        - Slow query detected | duration=2200ms
+2025-02-10 09:03:18 ERROR DBService        - Database connection lost | retrying
+
+2025-02-10 09:04:01 INFO  AuthService      - User logout | user_id=1023
+2025-02-10 09:04:05 INFO  HealthCheck     - All services healthy
+
+2025-02-10 09:05:21 INFO  PaymentService   - Payment initiated | txn_id=TXN88422
+2025-02-10 09:05:23 ERROR PaymentService   - Invalid card details | txn_id=TXN88422
+2025-02-10 09:05:24 WARN  FraudService     - Potential fraud pattern detected | txn_id=TXN88422
+
+2025-02-10 09:06:11 INFO  OrderService     - Order created | order_id=ORD55313
+2025-02-10 09:06:14 INFO  InventoryService - Inventory reserved | order_id=ORD55313
+2025-02-10 09:06:18 INFO  PaymentService   - Payment successful | txn_id=TXN88423
+2025-02-10 09:06:20 INFO  NotificationSvc  - Order confirmation sent | order_id=ORD55313
+
+2025-02-10 09:07:02 WARN  SystemMonitor    - High memory usage detected | usage=87%
+2025-02-10 09:07:05 ERROR SystemMonitor    - Memory threshold exceeded | usage=92%
+2025-02-10 09:07:08 INFO  AutoScaler       - Scaling up instance count
+
+2025-02-10 09:08:30 INFO  HealthCheck     - System stabilized after scaling

@@ -133,14 +133,6 @@ def main():
         3. Analyzing statistics
         4. Providing insights
         """)
-        
-        st.markdown("---")
-        st.markdown("### 📁 Log File")
-        log_file_path = st.text_input(
-            "Log File Path",
-            value="data/application.log",
-            help="Path to the log file to analyze"
-        )
     
     # Check if API key is provided
     if not api_key:
@@ -157,7 +149,46 @@ def main():
     
     # Main interface
     st.header("💬 Ask a Question About the Logs")
-    
+
+    # Analysis type selection
+    analysis_type = st.radio(
+        "Select analysis focus:",
+        ["Overview", "Error-focused", "Warning-focused", "Service-focused"],
+        horizontal=True
+    )
+
+    # File uploader for multiple files
+    os.makedirs("data/uploads", exist_ok=True)
+    uploaded_files = st.file_uploader(
+        "Upload additional log files (.log or .txt)",
+        type=["log", "txt"],
+        accept_multiple_files=True
+    )
+
+    if 'uploaded_files' not in st.session_state:
+        st.session_state.uploaded_files = []
+
+    # Save uploaded files and track their paths
+    new_uploaded_paths = []
+    if uploaded_files:
+        for up in uploaded_files:
+            safe_name = os.path.basename(up.name)
+            dest_path = os.path.join("data/uploads", safe_name)
+            with open(dest_path, "wb") as f:
+                f.write(up.read())
+            new_uploaded_paths.append(dest_path)
+
+        # Update session state (deduplicate)
+        current = set(st.session_state.uploaded_files)
+        current.update(new_uploaded_paths)
+        st.session_state.uploaded_files = sorted(current)
+
+    available_files = ["data/application.log"] + st.session_state.get('uploaded_files', [])
+
+    st.markdown("**Available log files:**")
+    for fpath in available_files:
+        st.write(f"- {fpath}")
+
     # Example queries
     example_queries = [
         "Analyze errors in the log file",
@@ -183,17 +214,16 @@ def main():
     
     # Analyze button
     if st.button("🔍 Analyze Logs", type="primary", use_container_width=True):
-        if not user_query:
-            st.warning("Please enter a question.")
+        if not available_files:
+            st.error("No available log files. Upload a log or use the default.")
             return
         
-        if not os.path.exists(log_file_path):
-            st.error(f"Log file not found: {log_file_path}")
-            return
-        
+        # Build combined prompt
+        combined_prompt = f"Analysis type: {analysis_type}\nUser question: {user_query}\nAvailable log files: {available_files}"
+
         # Process query
         with st.spinner("🤖 Agent is analyzing logs..."):
-            result = agent.process_query(user_query)
+            result = agent.process_query(combined_prompt, available_files=available_files)
         
         # Store result in session state
         st.session_state.analysis_result = result
